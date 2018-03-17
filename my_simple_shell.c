@@ -15,8 +15,15 @@ char* read_args() {
 	size_t b = 0;
 	int err;
 	err = getline(&line, &b, stdin);
-	if(err == -1 && errno != 0) {
-		perror("When read comand error was occured");
+	if(err == -1) {
+		int exitCode;
+		if(errno != 0){
+			perror("When read comand, error was occured.");
+			exitCode = EXIT_FAILURE;
+		} else {
+			exitCode = EXIT_SUCCESS;
+		}
+		exit(exitCode);
 	}
 	return line;
 }
@@ -93,6 +100,6 @@ int main() {
 		free(line);
 		free(args);
 	}
-	return 0;	
+	return EXIT_SUCCESS;	
 	
 }
