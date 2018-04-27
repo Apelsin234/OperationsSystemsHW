@@ -2,13 +2,15 @@
 
 void hello();
 
-double div(double, double);
+double myDiv(double, double);
 
 int main() {
 	
 	hello();
 
-	std::cout << div(7, 2) << std::endl;
+	double ans = myDiv(7, 2);
+
+	std::cout << ans << std::endl;
 	
 	return 0;
 }
