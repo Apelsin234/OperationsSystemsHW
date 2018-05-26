@@ -1,7 +1,7 @@
 all: clean comp_serv comp_client
 
 clean: 
-	rm -f client server
+	rm -f client server homework6.zip
 
 comp_serv:
 	cc -o server -Wall -fexceptions -fsanitize=address -g server.c
