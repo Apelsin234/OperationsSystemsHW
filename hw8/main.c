@@ -1,4 +1,4 @@
-#include <signal.h>
+
 #include <ucontext.h>
 #include <string.h>
 #include <stdio.h>
@@ -10,39 +10,37 @@
 #define handler_error(msg) \
 		{perror(msg); exit(1);}
 
-typedef struct sig_ucontext{
-	unsigned long uc_flags;
-	struct ucontext *uc_link;
-	stack_t uc_stack;
-	struct sigcontext uc_mcontext;
-	sigset_t uc_sigmask;
-
-} sig_ucontext_t;
-
 void posix_signal(int signum, siginfo_t *info, void* uc_void) {
 
-	sig_ucontext_t* uc = (sig_ucontext_t *)uc_void;
+	ucontext_t* uc = (ucontext_t *)uc_void;
 
 	void * call_addr;
+// #if __USE_GNU
+// 	printf("Hi\n");
+// #endif
 
 #if defined(__i386__)
-	call_addr = (void *)uc->uc_mcontext.eip;
+	call_addr = (void *)(uc->uc_mcontext.gregs[REG_EIP];
 #elif defined(__x86_64__)
-	call_addr = (void *)uc->uc_mcontext.rip;
+	call_addr = (void *)uc->uc_mcontext.gregs[REG_RIP];
 #else
 #error Unsupported arc
 #endif
 
 	fprintf(stderr, "signal %d (%s), address is %p from %p\n", 
-		signum, strsignal(signum), info->si_addr, (void *) call_addr);
+		signum, strsignal(signum), info->si_addr, call_addr);
 
 	void *addr[50];
 	int size = backtrace(addr, 50);
 
-	addr[1] = (void *)call_addr;
+	addr[1] = call_addr;
 
 	char ** mess = backtrace_symbols(addr, size);
 
+	if(mess == NULL) {
+		handler_error("backtrace_symbols");
+	}
+	
 	for(int i = 1; i < size && mess != NULL; i++) {
 		fprintf(stderr, "[bt]: (%d) %s\n",i, mess[i]);
 

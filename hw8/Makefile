@@ -1,5 +1,5 @@
 all: clean
-	cc  -o main -Wall -fexceptions -g main.c
+	gcc -D_GNU_SOURCE -o main -Wall -fexceptions -g main.c
 # 	 -fsanitize=address
 
 clean:
