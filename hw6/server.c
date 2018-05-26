@@ -85,7 +85,8 @@ void func(int sockfd) {
 #define CONST_SIZE 1000
 static struct kevent kevent_struct, event_list[CONST_SIZE];
 void func(int socket_listener_descriptor) {
-	int client_socket;
+	int client_socket, message_size;
+    char buffer[256];
     int kqueue_descriptor = kqueue();
     if (kqueue_descriptor < 0) {
         handle_error("kqueue");
@@ -101,7 +102,7 @@ void func(int socket_listener_descriptor) {
     while (1) {
         int events_count = kevent(kqueue_descriptor, NULL, 0, event_list, CONST_SIZE, NULL);
         if (events_count < 0) {
-            return -1;
+            return;
         }
         for (size_t i = 0; i < events_count; ++i) {
             event_identifiers[i] = event_list[i].ident;
@@ -132,7 +133,7 @@ void func(int socket_listener_descriptor) {
                     close(kqueue_descriptor);
                     close(socket_listener_descriptor);
                     close(client_socket);
-                    return 0;
+                    return;
                 }
                 if (strcmp(buffer, "exit") == 0) {
                     printf("Получено Сообщение: %s\n", buffer);

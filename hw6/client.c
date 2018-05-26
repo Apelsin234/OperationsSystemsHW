@@ -9,7 +9,9 @@
 #include <fcntl.h>
 
 #include <unistd.h>
-
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
 #define MAX 128
 #define SA struct sockaddr
 #define handle_error(msg) \
@@ -40,7 +42,13 @@ void func(int sockfd) {
 	}
 }
 #elif __APPLE__
-void func(int ) {
+
+#define CONST_SIZE 1000
+static struct kevent kevent_struct, event_list[CONST_SIZE];
+void func(int socket_descriptor) {
+    char message[256];
+    char buf[sizeof(message)];
+
 	int kqueue_descriptor = kqueue();
     if (kqueue_descriptor < 0) {
         handle_error("kqueue");
@@ -49,15 +57,13 @@ void func(int ) {
 
     // регистриция события
     if (kevent(kqueue_descriptor, &kevent_struct, 1, NULL, 0, NULL) < 0) {
-        perror("STDIN_FILENO");
-        exit(0);
+        handle_error("STDIN_FILENO");
     }
 
     // то же самое, но уже про сокет
     EV_SET(&kevent_struct, socket_descriptor, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
     if (kevent(kqueue_descriptor, &kevent_struct, 1, NULL, 0, NULL) < 0) {
-        perror("socket_descriptor");
-        exit(0);
+        handle_error("socket_descriptor");
     }
 
     int event_identifiers[CONST_SIZE];
@@ -65,7 +71,7 @@ void func(int ) {
     while (1) {
         int events_count = kevent(kqueue_descriptor, NULL, 0, event_list, CONST_SIZE, NULL);
         if (events_count < 0) {
-            return -1;
+            return;
         }
         for (size_t i = 0; i < events_count; ++i) {
             event_identifiers[i] = event_list[i].ident;
@@ -73,13 +79,15 @@ void func(int ) {
 
         for (size_t i = 0; i < events_count; ++i) {
             if (event_identifiers[i] == STDIN_FILENO) {
-                gets(message);
+                int n = 0;
+                while((message[n++] = getchar()) != '\n');
+                message[n] = '\0';
                 if (!strcmp(message, "exit")) {
                     printf("отправка сообщения о выходе на сервер...\n"); // нужно ли мне вообще это?
                     send(socket_descriptor, message, sizeof(message), 0);
                     close(socket_descriptor);
                     close(kqueue_descriptor);
-                    return 0;
+                    return;
                 }
                 printf("отправка сообщения на сервер...\n");
                 send(socket_descriptor, message, sizeof(message), 0);
@@ -89,12 +97,11 @@ void func(int ) {
                     printf("Сервер был закрыт\n");
                     close(socket_descriptor);
                     close(kqueue_descriptor);
-                    return 0;
+                    return;
                 }
                 printf("Получено сообщение: %s\n", buf);
             } else {
-                perror("unexpected event identifier");
-                exit(0);
+                handle_error("unexpected event identifier");
             }
         }
     }

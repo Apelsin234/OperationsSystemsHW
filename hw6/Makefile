@@ -9,8 +9,9 @@ comp_serv:
 comp_client:
 	cc -o client -Wall -fexceptions -fsanitize=address -g client.c
 
-run:
-	./server 127.0.0.1 23456 &
+run_server:
+	./server 127.0.0.1 23456
+run_client:
 	./client 127.0.0.1 23456
 pack: clean
 	zip homework6.zip *
