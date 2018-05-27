@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include <unistd.h>
 #ifdef __APPLE__
@@ -16,6 +17,44 @@
 #define SA struct sockaddr
 #define handle_error(msg) \
 		{perror(msg); exit(1);}
+
+		int send_safe(int sock, char* buff, int len) {
+	while(len > 0){
+		int i = send(sock, buff, len ,0);
+		if(i < 1) {
+			return -1;
+		}
+		buff += i;
+		len -= i;
+	}
+	return 0;
+}
+
+int get_safe(int sock, char* buff) {
+	char data[100];
+	int d_len;
+	int k = 0;
+	while((d_len = recv(sock, data, 100, 0)) > 0 ) {
+		
+		for(int i = 0; i < d_len; i++) {
+			*buff++ = data[i];
+		}
+		k += d_len;
+		if(data[d_len - 1] == '\n') {
+			break;
+		}
+
+		bzero(data, 100);
+	}
+
+	if(k == 0 || (d_len == -1 && errno != 0)) {
+		return -1; 
+	}
+
+	*buff ='\0';
+	return d_len;
+}
+
 
 #ifdef __linux
 void func(int sockfd) {
@@ -27,11 +66,15 @@ void func(int sockfd) {
 		n = 0;
 		while((buff[n++] = getchar()) != '\n');
 		buff[n] = '\0';
-		write(sockfd, buff, sizeof(buff));
+		
+		if(send_safe(sockfd, buff, n) == -1){
+			perror("send");
+		}
+			
 		bzero(buff, sizeof(buff));
-		int err = read(sockfd, buff, sizeof(buff));
-		if (err == -1) {
-			handle_error("read");
+		if(get_safe(sockfd, buff) == -1){
+			perror("recv");
+			exit(1);
 		}
 		
 		printf("From Server : %s", buff);
@@ -84,16 +127,20 @@ void func(int socket_descriptor) {
                 message[n] = '\0';
                 if (!strcmp(message, "exit")) {
                     printf("отправка сообщения о выходе на сервер...\n"); // нужно ли мне вообще это?
-                    send(socket_descriptor, message, sizeof(message), 0);
+                    if(send_safe(socket_descriptor, message, sizeof(message))) {
+                    	perror("send1");
+                    }
                     close(socket_descriptor);
                     close(kqueue_descriptor);
                     return;
                 }
                 printf("отправка сообщения на сервер...\n");
-                send(socket_descriptor, message, sizeof(message), 0);
+                if(-1 == send_safe(socket_descriptor, message, sizeof(message))){
+                	perror("send2");
+                }
                 printf("Ожидание сообщения\n");
             } else if (event_identifiers[i] == socket_descriptor) {
-                if (recv(socket_descriptor, buf, sizeof(message), 0) <= 0) {
+                if (get_safe(socket_descriptor, buf) <= 0) {
                     printf("Сервер был закрыт\n");
                     close(socket_descriptor);
                     close(kqueue_descriptor);

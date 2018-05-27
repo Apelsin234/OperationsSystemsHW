@@ -34,6 +34,45 @@ int set_nonblock(int fd) {
 #endif
 }
 
+int send_safe(int sock, char* buff, int len) {
+	while(len > 0){
+		int i = send(sock, buff, len ,0);
+		if(i < 1) {
+			return -1;
+		}
+		buff += i;
+		len -= i;
+	}
+	return 0;
+}
+
+int get_safe(int sock, char* buff) {
+	char data[100];
+	int d_len;
+	int k = 0;
+	while((d_len = recv(sock, data, 100, 0)) > 0 ) {
+		
+		for(int i = 0; i < d_len; i++) {
+			*buff++ = data[i];
+		}
+		k += d_len;
+		if(data[d_len - 1] == '\n') {
+			break;
+		}
+
+		bzero(data, 100);
+	}
+
+	if(k==0||(d_len == -1 && errno != EAGAIN)) {
+		return -1; 
+	}
+
+	*buff ='\0';
+	return d_len;
+}
+
+
+
 #ifdef __linux__
 void func(int sockfd) {
 	char buff[MAX] ;
@@ -61,12 +100,16 @@ void func(int sockfd) {
 		}
 		for (int i = 0;i < 1024; i++) {
 			if(slave_sockets[i] == 1 &&  FD_ISSET(i, &sets)) {
-				int recvSize = recv(i, buff, sizeof(buff), 0);
-				if (recvSize == 0 && errno != EAGAIN) {
+
+				int recvSize = get_safe(i, buff);
+				
+				if (recvSize < 0 && errno != EAGAIN) {
 					close(i);
 					slave_sockets[i] = 0;
 				} else if (recvSize != 0 ) {
-					send(i, buff, recvSize, 0);
+					if(send_safe(i, buff, recvSize) == -1) {
+						perror("send");
+					}
 				}
 			}
 		}
@@ -122,7 +165,8 @@ void func(int socket_listener_descriptor) {
             } else {
                 client_socket = event_identifiers[i];
 
-                message_size = recv(client_socket, buffer, 256, 0);
+                message_size = get_safe(client_socket, buffer, 256);
+
                 if (message_size <= 0) {
                     close(client_socket);
                     break;
@@ -143,7 +187,9 @@ void func(int socket_listener_descriptor) {
                 }
                 printf("Получено Сообщение: %s\n", buffer);
                 printf("Отправляю принятое сообщение клиенту\n");
-                send(client_socket, buffer, message_size, 0);
+				if(send_safe(client_socket, buffer, message_size) == -1){
+					perror("send");
+				}
 
                 if (message_size <= 0) {
                     printf("Закрываем подключение к клиенту\n");
