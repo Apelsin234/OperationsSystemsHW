@@ -24,12 +24,30 @@ void func(int sockfd) {
 		n = 0;
 		while((buff[n++] = getchar()) != '\n');
 		buff[n] = '\0';
-		write(sockfd, buff, sizeof(buff));
-		bzero(buff, sizeof(buff));
-		int err = read(sockfd, buff, sizeof(buff));
-		if (err == -1) {
-			handle_error("read");
+		
+		int k = 0;
+		while(k != n){
+			int u = write(sockfd, buff + k, n - k);
+			if (u == -1){
+				handle_error("write");
+			}
+			k += u;
 		}
+		bzero(buff, sizeof(buff));
+		k = 0;
+		while(1) {
+			char bu_hp[MAX];
+			int err = read(sockfd, bu_hp, sizeof(bu_hp));
+			if (err == -1) {
+				handle_error("read");
+			}
+			strncpy(buff + k, bu_hp, err);
+			k += err;
+			if(buff[k - 1] == '\n') {
+				break;
+			}
+		}
+		buff[k] = '\0';
 		
 		printf("From Server : %s", buff);
 		if((strncmp(buff, "exit", 4)) == 0) {

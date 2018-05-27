@@ -11,7 +11,7 @@
 
 #include <fcntl.h>
 #define MAX 128
-#define SA struct sockaddr
+#define SA struct sockaddr 
 
 #define handle_error(msg) \
 		{perror(msg); exit(1);}
@@ -21,16 +21,34 @@ void func(int sockfd) {
 	int n;
 	while (1) {
 		bzero(buff, MAX);
-		int err = read(sockfd, buff, sizeof(buff));
-		if (err == -1) {
-			handle_error("read");
+		int k = 0;
+		while(1) {
+			char bu_hp[MAX];
+			int err = read(sockfd, bu_hp, sizeof(bu_hp));
+			if (err == -1) {
+				handle_error("read");
+			}
+			strncpy(buff + k, bu_hp, err);
+			k += err;
+			if(buff[k - 1] == '\n') {
+				break;
+			}
 		}
+		
+		buff[k] = '\0';
 		printf("From client: %s\t To client : ", buff);
 		bzero(buff, MAX);
 		n = 0;
 		while((buff[n++] = getchar()) != '\n');
 		buff[n] = '\0';
-		write(sockfd, buff ,sizeof(buff));
+		k = 0;
+		while(k != n){
+			int u = write(sockfd, buff + k, n - k);
+			if (u == -1){
+				handle_error("write");
+			}
+			k += u;
+		}
 		if(strncmp("exit", buff, 4) == 0) {
 			printf("Server Exit...\n");
 			break;
