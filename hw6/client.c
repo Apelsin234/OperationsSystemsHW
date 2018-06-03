@@ -10,85 +10,133 @@
 #include <errno.h>
 
 #include <unistd.h>
-#ifdef __APPLE__
+#ifdef __linux
+
+#include <sys/epoll.h>
+#elif __APPLE__
 #include <sys/event.h>
 #endif
-#define MAX 128
+#define MAX 1000
 #define SA struct sockaddr
 #define handle_error(msg) \
 		{perror(msg); exit(1);}
+#define handle_close(msg) \
+		{close(epollfd); close(sockfd); handle_error(msg)}
 
-		int send_safe(int sock, char* buff, int len) {
-	while(len > 0){
-		int i = send(sock, buff, len ,0);
-		if(i < 1) {
-			return -1;
-		}
-		buff += i;
-		len -= i;
+void send_safe(int sock, char* buff, int len) {
+	int nsend = 0;
+	while (len > 0) {
+        nsend = write(sock, buff + nsend, len);
+        if (nsend < 0 && errno != EAGAIN) {
+            close(sock);
+            exit(0);
+        }
+        len -= nsend;
 	}
-	return 0;
 }
 
-int get_safe(int sock, char* buff) {
-	char data[100];
-	int d_len;
-	int k = 0;
-	while((d_len = recv(sock, data, 100, 0)) > 0 ) {
-		
-		for(int i = 0; i < d_len; i++) {
-			*buff++ = data[i];
-		}
-		k += d_len;
-		if(data[d_len - 1] == '\n') {
-			break;
-		}
+void get_safe(int sock, char* buff) {
+	bzero(buff, MAX);
 
-		bzero(data, 100);
+	int n = 0;
+	int nrecv = 0;
+
+    while (1) {
+    	nrecv = read(sock, buff + n, MAX - 1);
+        if (nrecv == -1 && errno != EAGAIN) {
+        	handle_error("read error!");
+
+        }
+		if ((nrecv == -1 && errno == EAGAIN) || nrecv == 0) {
+        	return;
+        }
+        n += nrecv;
 	}
-
-	if(k == 0 || (d_len == -1 && errno != 0)) {
-		return -1; 
-	}
-
-	*buff ='\0';
-	return d_len;
 }
 
 
 #ifdef __linux
-void func(int sockfd) {
+void func(int sockfd, int ok) {
 	char buff[MAX];
-	int n;
-	while (1) {
-		bzero(buff, sizeof(buff));
-		printf("Enter the string : ");
-		n = 0;
-		while((buff[n++] = getchar()) != '\n');
-		buff[n] = '\0';
-		
-		if(send_safe(sockfd, buff, n) == -1){
-			perror("send");
+	struct epoll_event event;
+	int epollfd = epoll_create(10);
+	event.events = EPOLLIN;
+	if(!ok) {
+		event.events |= EPOLLOUT;
+	}
+	event.data.fd = sockfd;
+
+	int r = epoll_ctl(epollfd, EPOLL_CTL_ADD,sockfd,&event);
+	if (r == -1) {
+		handle_close("epoll_ctl");
+	}
+
+	
+	int loop, epollout , epollin ;
+	loop = epollout = epollin = 0;
+	while(1) {
+		struct epoll_event events[10];
+
+		int n;
+		if((n = epoll_wait(epollfd, events, 10, -1))== -1) {
+			handle_close("epoll_wait");
+
 		}
-			
-		bzero(buff, sizeof(buff));
-		if(get_safe(sockfd, buff) == -1){
-			perror("recv");
-			exit(1);
-		}
-		
-		printf("From Server : %s", buff);
-		if((strncmp(buff, "exit", 4)) == 0) {
-			printf("Client Exit...\n");
+		if (loop == 1) {
 			break;
 		}
+		for(int i = 0; i < n; i++) {
+			if( (events[i].data.fd == sockfd ) && (events[i].events & EPOLLOUT) && (!ok) ) {
+				
+				int err = 0;
+				socklen_t len = sizeof(int);
+				int gi = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &err, &len);
+				if (gi != -1) {
+					if(err == 0) {
+						struct epoll_event ev;
+						ev.events = EPOLLOUT | EPOLLIN;
+						ev.data.fd = sockfd;
+						if(epoll_ctl(epollfd, EPOLL_CTL_MOD, sockfd, &ev) == -1) {
+							handle_close("epoll_ctl 2");
+						}
+					} else {
+						struct epoll_event ev;
+						ev.events = 0;
+						ev.data.fd = sockfd;
+						epoll_ctl(epollfd, EPOLL_CTL_DEL, sockfd, &ev);
+						close(sockfd);
+					}
+				}
+			}
+			if ((events[i].events & EPOLLOUT) && epollout == 0) {
+                int n = 0;
+                while((buff[n++] = getchar()) != '\n');
+                buff[n] = '\0';
+                
+                send_safe(events[i].data.fd, buff, n);
+                printf("Сообщение отправленно: %s", buff);
+                epollout = 1;
+            }
+
+            if ((events[i].events & EPOLLIN) && epollin == 0) {
+                
+                get_safe(events[i].data.fd, buff);
+                loop = 1;
+                epollin = 1;
+                printf("Ответ: %s\n", buff);
+            }
+
+		}
 	}
+	close(epollfd);
+
+	
 }
 #elif __APPLE__
 
 #define CONST_SIZE 1000
 static struct kevent kevent_struct, event_list[CONST_SIZE];
-void func(int socket_descriptor) {
+void func(int socket_descriptor, int ok) {
     char message[256];
     char buf[sizeof(message)];
 
@@ -170,7 +218,7 @@ int main(int argc, char * argv[]) {
 	}
 	int sockfd;
 	struct sockaddr_in servaddr;
-	sockfd = socket(AF_INET,SOCK_STREAM, 0);
+	sockfd = socket(AF_INET,SOCK_STREAM | SOCK_NONBLOCK, 0);
 	if (sockfd == -1) {
 		handle_error("socket\n");
 	}
@@ -180,12 +228,13 @@ int main(int argc, char * argv[]) {
 	servaddr.sin_family = AF_INET;
 	servaddr.sin_addr.s_addr = inet_addr(ip);
 	servaddr.sin_port = htons(port);
-	if(connect(sockfd, (SA *)&servaddr, sizeof(servaddr)) != 0) {
-		handle_error("connect\n");
+	int ok = 1;
+	if((connect(sockfd, (SA *)&servaddr, sizeof(servaddr)) == -1) && (errno == EINPROGRESS) ) {
+		ok = 0;
 		
 	}
 	
 	printf("connected to the server..\n");
-	func(sockfd);
+	func(sockfd, ok);
 	close(sockfd);
 }

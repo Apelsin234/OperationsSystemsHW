@@ -9,13 +9,16 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
-#ifdef __APPLE__
 
+#ifdef __linux
+
+#include <sys/epoll.h>
+#elif __APPLE__
 #include <sys/event.h>
 #endif
 
 
-#define MAX 128
+#define MAX 1000
 #define SA struct sockaddr
 
 #define handle_error(msg) \
@@ -34,94 +37,111 @@ int set_nonblock(int fd) {
 #endif
 }
 
-int send_safe(int sock, char* buff, int len) {
-	while(len > 0){
-		int i = send(sock, buff, len ,0);
-		if(i < 1) {
-			return -1;
-		}
-		buff += i;
-		len -= i;
-	}
-	return 0;
+int send_safe(int socket, void *buffer, size_t length) {
+    char *ptr = (char *) buffer;
+    while (length > 0) {
+        int i = send(socket, ptr, length, 0);
+        if (i < 1) {
+            return 1;
+        }
+        ptr += i;
+        length -= i;
+    }
+    return 0;
 }
 
-int get_safe(int sock, char* buff) {
-	char data[100];
-	int d_len;
-	int k = 0;
-	while((d_len = recv(sock, data, 100, 0)) > 0 ) {
-		
-		for(int i = 0; i < d_len; i++) {
-			*buff++ = data[i];
-		}
-		k += d_len;
-		if(data[d_len - 1] == '\n') {
-			break;
-		}
+int get_safe(int socket_fd, char *message) {
+    char data[100];
+    ssize_t data_read;
 
-		bzero(data, 100);
-	}
+    while ((data_read = recv(socket_fd, data, 100, 0)) > 0) {
+        for (int i = 0; i < data_read; i++) {
+            *message++ = data[i];
+        }
+        if (data[data_read - 1] == '\n') {
+            break;
+        }
+        bzero(data, 100);
+    }
 
-	if(k==0||(d_len == -1 && errno != EAGAIN)) {
-		return -1; 
-	}
+    if (data_read == -1 && errno != 0) {
+        return 1;
+    }
 
-	*buff ='\0';
-	return d_len;
+    *message = '\0';
+
+    return 0;
 }
 
 
 
 #ifdef __linux__
 void func(int sockfd) {
-	char buff[MAX] ;
-	int slave_sockets[1024] ;
-	bzero(slave_sockets, sizeof(slave_sockets)); 
+	int efd = epoll_create(100);
+    struct epoll_event listenev;
+    listenev.events = EPOLLIN | EPOLLPRI | EPOLLET;
+    listenev.data.fd = sockfd;
+    if (epoll_ctl(efd, EPOLL_CTL_ADD, sockfd, &listenev) < 0) {
+        handle_error("epoll_ctl");
+    }
+    socklen_t client;
+    struct epoll_event events[100];
+    struct epoll_event connev;
+    struct sockaddr_in cliaddr;
 
-	bzero(buff, sizeof(buff));
-	while (1) {
-		fd_set sets;
-		FD_ZERO(&sets);
-		FD_SET(sockfd, &sets);
-		for(int i = 0; i < 1024; i++) {
-			if (slave_sockets[i] == 1)
-				FD_SET(i, &sets);
-		}
-		int maxi = sockfd;
-		for (int i = 0; i < 1024; i++) {
-			if (slave_sockets[i] == 1 && i > maxi) {
-				maxi = i;
-			}
-		}
-		printf("%d\n", maxi );
-		if (-1 == select(maxi + 1, &sets, NULL, NULL, NULL)) {
-			handle_error("select");
-		}
-		for (int i = 0;i < 1024; i++) {
-			if(slave_sockets[i] == 1 &&  FD_ISSET(i, &sets)) {
+    while (1) {
+        int nfds = epoll_wait(efd, events, 100, -1);
 
-				int recvSize = get_safe(i, buff);
-				
-				if (recvSize < 0 && errno != EAGAIN) {
-					close(i);
-					slave_sockets[i] = 0;
-				} else if (recvSize != 0 ) {
-					if(send_safe(i, buff, recvSize) == -1) {
-						perror("send");
-					}
-				}
-			}
-		}
-		if (FD_ISSET(sockfd, &sets)) {
-			int slavefd = accept(sockfd, 0, 0);
-			if (slavefd == -1) {
-				handle_error("accept");
-			}
-			set_nonblock(slavefd);
-			slave_sockets[slavefd] = 1;
-		}	
-	}
+        for (int n = 0; n < nfds; ++n) {
+            if (events[n].data.fd == sockfd) {
+                client = sizeof(cliaddr);
+                int connfd = accept(sockfd, (struct sockaddr *) &cliaddr, &client);
+                if (connfd < 0) {
+                    perror("accept");
+                    continue;
+                }
+
+                set_nonblock(connfd);
+                connev.data.fd = connfd;
+                connev.events = EPOLLIN | EPOLLOUT ;
+                if ((!epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &connev)) < 0) {
+                    perror("Epoll fd add");
+                    close(connfd);
+                    continue;
+                }
+
+            } else {
+                int fd = events[n].data.fd;
+
+                if (events[n].events & EPOLLIN) {
+
+                    char reqline[MAX];
+
+                    bzero(reqline, MAX);
+
+                    if (get_safe(fd, reqline)) {
+                        perror("Read");
+                        break;
+                    } else {
+                        printf("Полученно сообщение: %s", reqline);
+                    }
+
+                    char response[MAX];
+                    bzero(response, MAX);
+                    sprintf(response, "Hello, %s", reqline);
+
+                    if (send_safe(fd, response, strlen(response))) {
+                        perror("Write");
+                    } else {
+                        printf("Отправлен ответ: %s", response);
+                    }
+
+                    epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                    close(fd);
+                }
+            }
+        }
+}
 }
 #elif __APPLE__
 
@@ -229,6 +249,13 @@ int main(int argc, char * argv[]) {
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = inet_addr(ip);
 	serv_addr.sin_port = htons(port);
+
+	#ifdef __linux__
+		int yeah = 1;
+		if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yeah, sizeof(int))){
+			handle_error("dasd");
+		}
+	#endif
 
 	if((bind(sockfd, (SA*)&serv_addr, sizeof(serv_addr))) < 0) {
 		handle_error("bind\n");
